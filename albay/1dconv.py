@@ -1,6 +1,6 @@
 from numpy import mean
 from numpy import std
-from numpy import dstack
+from numpy import dstack, stack, vstack, hstack
 from pandas import read_csv
 from matplotlib import pyplot
 from keras.models import Sequential
@@ -10,65 +10,20 @@ from keras.layers import Dropout
 from keras.layers.convolutional import Conv1D
 from keras.layers.convolutional import MaxPooling1D
 from keras.utils import to_categorical
+from keras.models import model_from_json
+
 import csv
-
-
-# load a single file as a numpy array
-def load_file(filepath):
-	dataframe = read_csv(filepath, header=None, delim_whitespace=True)
-	return dataframe.values
-
-# load a list of files and return as a 3d numpy array
-def load_group(filenames, prefix=''):
-	loaded = list()
-	
-	print(filenames)
-	for name in filenames:
-		data = load_file(prefix + name)
-		loaded.append(data)
-	# stack group so that features are the 3rd dimension
-	loaded = dstack(loaded)
-	return loaded
-
-# load a dataset group, such as train or test
-def load_dataset_group(group, prefix=''):
-	filepath = prefix + group + '/Inertial Signals/'
-	# load all 9 files as a single array
-	filenames = list()
-	# total acceleration
-	filenames += ['total_acc_x_'+group+'.txt', 'total_acc_y_'+group+'.txt', 'total_acc_z_'+group+'.txt']
-	# body acceleration
-	filenames += ['body_acc_x_'+group+'.txt', 'body_acc_y_'+group+'.txt', 'body_acc_z_'+group+'.txt']
-	# body gyroscope
-	filenames += ['body_gyro_x_'+group+'.txt', 'body_gyro_y_'+group+'.txt', 'body_gyro_z_'+group+'.txt']
-	# load input data
-	X = load_group(filenames, filepath)
-	# load class output
-	y = load_file(prefix + group + '/y_'+group+'.txt')
-	return X, y
-
-# load the dataset, returns train and test X and y elements
-def load_dataset(prefix=''):
-	# load all train
-	trainX, trainy = load_dataset_group('train', prefix + 'HARDataset/')
-	# print(trainX.shape, trainy.shape)
-	# load all test
-	testX, testy = load_dataset_group('test', prefix + 'HARDataset/')
-	# print(testX.shape, testy.shape)
-	# zero-offset class values
-	trainy = trainy - 1
-	testy = testy - 1
-	# one hot encode y
-	trainy = to_categorical(trainy)
-	# 6
-	testy = to_categorical(testy)
-	print(trainX.shape, trainy.shape, testX.shape, testy.shape)
-	return trainX, trainy, testX, testy
+import keras
+import numpy as np
+import pandas as pd
 
 # fit and evaluate a model
 def evaluate_model(trainX, trainy, testX, testy):
-	verbose, epochs, batch_size = 0, 10, 32
+
+	verbose, epochs, batch_size = 1, 50, 32
 	n_timesteps, n_features, n_outputs = trainX.shape[1], trainX.shape[2], trainy.shape[1]
+
+
 	model = Sequential()
 	model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(n_timesteps,n_features)))
 	model.add(Conv1D(filters=64, kernel_size=3, activation='relu'))
@@ -77,11 +32,33 @@ def evaluate_model(trainX, trainy, testX, testy):
 	model.add(Flatten())
 	model.add(Dense(100, activation='relu'))
 	model.add(Dense(n_outputs, activation='softmax'))
+
+	callbacks_list = [
+		keras.callbacks.ModelCheckpoint(
+			filepath='best_model.{epoch:02d}-{val_loss:.2f}.h5',
+			monitor='val_loss', save_best_only=True),
+		keras.callbacks.EarlyStopping(monitor='acc', patience=1)
+	]
 	model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
 	# fit network
-	model.fit(trainX, trainy, epochs=epochs, batch_size=batch_size, verbose=verbose)
+	model.fit(trainX, trainy, epochs=epochs, batch_size=batch_size, verbose=verbose, callbacks=callbacks_list, validation_data=(testX,testy))
+
+
 	# evaluate model
-	_, accuracy = model.evaluate(testX, testy, batch_size=batch_size, verbose=0)
+	_, accuracy = model.evaluate(testX, testy, batch_size=batch_size, verbose=1)
+
+
+	# serialize model to JSON
+	model_json = model.to_json()
+	with open("model.json", "w") as json_file:
+		json_file.write(model_json)
+	# serialize weights to HDF5
+	model.save_weights("model.h5")
+	print("Saved model to disk")
+
+
+
 	return accuracy
 
 # summarize scores
@@ -103,18 +80,57 @@ def getAndStackRows(pointtype):
 	band = ["vv","vh"]
 	filename = ""
 	
-
-
-	count = 0
 	for x in band:
 
 		filename = "../training data coords/" +	pointtype+"/" +pointtype+"_"+str(x)+".csv"
-
 		dataframe = read_csv(filename, header=None)
 		data_arr.append(dataframe.values)
 
 	data_arr = dstack(data_arr)
 	return data_arr
+
+
+
+def getAndStackRowsForPrediction():
+
+	data_arr=list()
+	band = ["vv","vh"]
+	
+	for x in band:
+
+		outfile = "../s1_2018/csv/"+x+"/"+x+".csv"
+		print(outfile)
+		
+		
+		dataframe = read_csv(outfile, header=None)
+		data_arr.append(dataframe.values)
+
+	data_arr = dstack(data_arr)
+	return data_arr
+
+
+
+
+
+def appendRowsForPredicting():
+
+	
+	band = ["vv","vh"]
+
+	for x in band:
+	
+		data_arr = list()
+	
+		for num in range(1,32):
+
+			outfile = "../s1_2018/csv/"+x+"/"+str(num)+".csv"
+			dataframe = read_csv(outfile, header=None)
+			data_arr.append(dataframe.values)
+
+		data_arr = hstack(data_arr)
+		outfile = "../s1_2018/csv/"+ x + "/"+x+".csv"
+		data_arr = pd.DataFrame(data_arr)
+		data_arr.to_csv(outfile,index=False,header=False)
 
 
 
@@ -135,7 +151,7 @@ def read_dataset():
 	# do this for test data set too
 
 # run an experiment
-def run_experiment(repeats=10):
+def train_test_model():
 	
 	# load data
 
@@ -146,13 +162,56 @@ def run_experiment(repeats=10):
 	# repeat experiment
 
 	scores = list()
-	for r in range(repeats):
-		score = evaluate_model(trainX, trainy, testX, testy)
-		score = score * 100.0
-		print('>#%d: %.3f' % (r+1, score))
-		scores.append(score)
+	score = evaluate_model(trainX, trainy, testX, testy)
+	score = score * 100.0
+	print('>#%.3f' % (score))
+	scores.append(score)
+	
 	# summarize results
 	summarize_results(scores)
 
-# run the experiment
-run_experiment()
+
+def predict(data):
+
+
+	# load json and create model
+	json_file = open('model.json', 'r')
+	loaded_model_json = json_file.read()
+	json_file.close()
+	loaded_model = model_from_json(loaded_model_json)
+	# load weights into new model
+	loaded_model.load_weights("model.h5")
+	print("Loaded model from disk")
+
+
+	loaded_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+	# loaded_model.predict
+
+
+
+	# load model here
+	print("use loaded model here")
+
+	classified = loaded_model.predict(data)
+	return classified
+
+################################################################
+
+
+################## run the experiment
+#
+# train_test_model()
+
+################## retrieve actual data to be classified
+# 
+# appendRowsForPredicting()
+
+
+################## stack the two bands
+# 
+actualData = getAndStackRowsForPrediction()
+
+################## call the function to predict
+#
+# results = predict(actualData) 

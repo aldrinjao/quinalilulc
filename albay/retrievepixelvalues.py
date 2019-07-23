@@ -45,13 +45,7 @@ def extract(filename):
 
         vv = np.zeros((1677610,))
         vh = np.zeros((1677610,))
-
-        # for x in range(0,len(classif_coords)):
-        #     ts_vv[x][0] = classif_coords[x]
-        #     ts_vh[x][0] = classif_coords[x]
-
-        # segregate to c#_data_vv, vh 
-
+        
         for x in range(1,32):
         
                 vv = extract_vv(x)
